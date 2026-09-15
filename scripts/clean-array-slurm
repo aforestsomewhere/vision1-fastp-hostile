@@ -5,6 +5,7 @@
 #SBATCH --error=logs/clean_%A_%a.err
 
 set -euo pipefail
+module load apptainer
 
 # -------------------------------------------------------------------------
 # Arguments
