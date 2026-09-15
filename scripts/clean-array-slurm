@@ -11,7 +11,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Load configuration (defines $IMAGE)
-source "$REPO_DIR/config/my_run.env"
+[[ -f "$ENV_FILE" ]] || {
+    echo "ERROR: config file not found: $ENV_FILE" >&2
+    exit 1
+}
+
+source "$ENV_FILE"
 
 # Check container exists
 [[ -f "$IMAGE" ]] || {
