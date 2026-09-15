@@ -100,8 +100,9 @@ echo
 # Run clean-one-sample INSIDE the Apptainer container
 # -------------------------------------------------------------------------
 
-apptainer exec "$IMAGE" \
+apptainer exec \
     --bind /data:/data \
+    "$IMAGE" \
     bash "$CLEAN_SCRIPT" \
     --r1 "$r1" \
     --r2 "$r2" \
