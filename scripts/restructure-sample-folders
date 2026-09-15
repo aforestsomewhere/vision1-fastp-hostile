@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage:
+  restructure-sample-folders INPUT_DIR OUTPUT_DIR
+
+Assumes:
+  INPUT_DIR/
+    sampleA_R1.fastq.gz
+    sampleA_R2.fastq.gz
+    sampleB_R1.fastq.gz
+    sampleB_R2.fastq.gz
+
+Creates:
+  OUTPUT_DIR/
+    sampleA/
+      sampleA_R1.fastq.gz -> /path/to/INPUT_DIR/sampleA_R1.fastq.gz
+      sampleA_R2.fastq.gz -> /path/to/INPUT_DIR/sampleA_R2.fastq.gz
+    sampleB/
+      sampleB_R1.fastq.gz -> /path/to/INPUT_DIR/sampleB_R1.fastq.gz
+      sampleB_R2.fastq.gz -> /path/to/INPUT_DIR/sampleB_R2.fastq.gz
+
+The original FASTQ files are not moved or modified.
+USAGE
+}
+
+if [[ $# -ne 2 ]]; then
+  usage
+  exit 1
+fi
+
+input_dir="$1"
+output_dir="$2"
+
+if [[ ! -d "$input_dir" ]]; then
+  echo "ERROR: Input directory does not exist: $input_dir" >&2
+  exit 1
+fi
+
+# Convert input directory to absolute path
+input_dir="$(realpath "$input_dir")"
+
+mkdir -p "$output_dir"
+
+found=0
+
+for r1 in "$input_dir"/*_R1.fastq.gz; do
+  # Handle case where glob matches nothing
+  [[ -e "$r1" ]] || continue
+
+  found=1
+
+  filename="$(basename "$r1")"
+  sample="${filename%_R1.fastq.gz}"
+
+  r2="$input_dir/${sample}_R2.fastq.gz"
+
+  if [[ ! -f "$r2" ]]; then
+    echo "ERROR: Missing R2 for sample '$sample': $r2" >&2
+    exit 1
+  fi
+
+  sample_dir="$output_dir/$sample"
+  mkdir -p "$sample_dir"
+
+  ln -sf "$r1" "$sample_dir/${sample}_R1.fastq.gz"
+  ln -sf "$r2" "$sample_dir/${sample}_R2.fastq.gz"
+
+  echo "Linked: $sample"
+done
+
+if [[ "$found" -eq 0 ]]; then
+  echo "ERROR: No *_R1.fastq.gz files found in $input_dir" >&2
+  exit 1
+fi
+
+echo "Done: $output_dir"

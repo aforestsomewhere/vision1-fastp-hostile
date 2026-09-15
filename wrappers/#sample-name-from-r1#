@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+r1="${1:?Usage: sample-name-from-r1 R1.fastq.gz}"
+
+base=$(basename "$r1")
+
+base="${base%.fastq.gz}"
+base="${base%.fq.gz}"
+base="${base%_R1}"
+base="${base%_R1_001}"
+base="${base%_1}"
+
+echo "$base"
