@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Load configuration (defines $IMAGE)
-source "$REPO_DIR/config/my_env"
+source "$REPO_DIR/config/my_run.env"
 
 # Check container exists
 [[ -f "$IMAGE" ]] || {
