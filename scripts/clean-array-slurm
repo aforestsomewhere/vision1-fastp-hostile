@@ -6,29 +6,57 @@
 
 set -euo pipefail
 
-# Find repository root from the location of this script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# -------------------------------------------------------------------------
+# Arguments
+# -------------------------------------------------------------------------
 
-# Load configuration (defines $IMAGE)
+samples_tsv="$1"
+outdir="$2"
+ENV_FILE="$3"
+CLEAN_SCRIPT="$4"
+
+# -------------------------------------------------------------------------
+# Validate inputs
+# -------------------------------------------------------------------------
+
+[[ -f "$samples_tsv" ]] || {
+    echo "ERROR: samples TSV not found: $samples_tsv" >&2
+    exit 1
+}
+
 [[ -f "$ENV_FILE" ]] || {
     echo "ERROR: config file not found: $ENV_FILE" >&2
     exit 1
 }
 
+[[ -f "$CLEAN_SCRIPT" ]] || {
+    echo "ERROR: clean-one-sample script not found: $CLEAN_SCRIPT" >&2
+    exit 1
+}
+
+# Load configuration (defines $IMAGE)
 source "$ENV_FILE"
 
-# Check container exists
+[[ -n "${IMAGE:-}" ]] || {
+    echo "ERROR: IMAGE is not defined in $ENV_FILE" >&2
+    exit 1
+}
+
 [[ -f "$IMAGE" ]] || {
     echo "ERROR: Apptainer image not found: $IMAGE" >&2
     exit 1
 }
 
-samples_tsv="$1"
-outdir="$2"
+mkdir -p "$outdir"
+
+echo "Samples TSV: $samples_tsv"
+echo "Output:      $outdir"
+echo "Config:      $ENV_FILE"
+echo "Container:   $IMAGE"
+echo "Script:      $CLEAN_SCRIPT"
 
 # -------------------------------------------------------------------------
-# Get this array task's row.
+# Get this array task's row
 #
 # samples.tsv:
 #   line 1 = header
@@ -48,18 +76,31 @@ if [[ -z "${sample:-}" || -z "${r1:-}" || -z "${r2:-}" ]]; then
     exit 1
 fi
 
+[[ -f "$r1" ]] || {
+    echo "ERROR: R1 not found: $r1" >&2
+    exit 1
+}
+
+[[ -f "$r2" ]] || {
+    echo "ERROR: R2 not found: $r2" >&2
+    exit 1
+}
+
+echo
 echo "Array task: $SLURM_ARRAY_TASK_ID"
 echo "Sample:     $sample"
 echo "R1:         $r1"
 echo "R2:         $r2"
 echo "Node:       $(hostname)"
 echo "Start:      $(date)"
+echo
 
 # -------------------------------------------------------------------------
-# Run existing single-sample pipeline
+# Run clean-one-sample INSIDE the Apptainer container
 # -------------------------------------------------------------------------
 
-clean-one-sample \
+apptainer exec "$IMAGE" \
+    bash "$CLEAN_SCRIPT" \
     --r1 "$r1" \
     --r2 "$r2" \
     --sample "$sample" \
@@ -70,6 +111,6 @@ clean-one-sample \
     --hostile-index /data/databases_food/bowtie_indices/m_domestica \
     --hostile-index-label apple
 
+echo
 echo "Finished: $sample"
 echo "End:      $(date)"
-
