@@ -6,6 +6,19 @@
 
 set -euo pipefail
 
+# Find repository root from the location of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Load configuration (defines $IMAGE)
+source "$REPO_DIR/config/my_env"
+
+# Check container exists
+[[ -f "$IMAGE" ]] || {
+    echo "ERROR: Apptainer image not found: $IMAGE" >&2
+    exit 1
+}
+
 samples_tsv="$1"
 outdir="$2"
 
@@ -54,3 +67,4 @@ clean-one-sample \
 
 echo "Finished: $sample"
 echo "End:      $(date)"
+
