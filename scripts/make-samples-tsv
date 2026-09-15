@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage:
+  make-samples-tsv INPUT_DIR [OUTPUT_TSV]
+
+Assumes:
+  INPUT_DIR/
+    sampleA/
+      sampleA_R1.fastq.gz
+      sampleA_R2.fastq.gz
+    sampleB/
+      sampleB_R1_001.fastq.gz
+      sampleB_R2_001.fastq.gz
+
+Creates:
+  sample    r1    r2
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+input_dir="${1:-}"
+output_tsv="${2:-}"
+
+if [[ -z "$input_dir" ]]; then
+  usage
+  exit 2
+fi
+
+# Remove trailing slashes to avoid /parent/path//sample
+input_dir="${input_dir%/}"
+
+if [[ ! -d "$input_dir" ]]; then
+  echo "ERROR: input directory does not exist: $input_dir" >&2
+  exit 2
+fi
+
+# Convert to absolute normalized path if possible
+input_dir="$(cd "$input_dir" && pwd -P)"
+
+find_one_fastq() {
+  local sample_dir="$1"
+  local read="$2"
+
+  find "$sample_dir" -maxdepth 1 -type f \
+    \( \
+      -name "${read}.fastq.gz" \
+      -o -name "*_${read}.fastq.gz" \
+      -o -name "*_${read}_001.fastq.gz" \
+      -o -name "${read}.fq.gz" \
+      -o -name "*_${read}.fq.gz" \
+      -o -name "*_${read}_001.fq.gz" \
+    \) \
+    | sort
+}
+
+write_samples() {
+  printf "sample\tr1\tr2\n"
+
+  found_any=0
+
+  while IFS= read -r sample_dir; do
+    sample="$(basename "$sample_dir")"
+
+    mapfile -t r1_matches < <(find_one_fastq "$sample_dir" "R1")
+    mapfile -t r2_matches < <(find_one_fastq "$sample_dir" "R2")
+
+    if [[ "${#r1_matches[@]}" -eq 0 || "${#r2_matches[@]}" -eq 0 ]]; then
+      echo "WARNING: skipping $sample: missing R1 or R2 FASTQ" >&2
+      continue
+    fi
+
+    if [[ "${#r1_matches[@]}" -gt 1 || "${#r2_matches[@]}" -gt 1 ]]; then
+      echo "WARNING: skipping $sample: found multiple R1 or R2 FASTQs" >&2
+      echo "  R1 matches:" >&2
+      printf "    %s\n" "${r1_matches[@]}" >&2
+      echo "  R2 matches:" >&2
+      printf "    %s\n" "${r2_matches[@]}" >&2
+      continue
+    fi
+
+    printf "%s\t%s\t%s\n" "$sample" "${r1_matches[0]}" "${r2_matches[0]}"
+    found_any=1
+  done < <(find "$input_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+
+  if [[ "$found_any" -eq 0 ]]; then
+    echo "ERROR: no valid sample directories found under $input_dir" >&2
+    exit 1
+  fi
+}
+
+if [[ -n "$output_tsv" ]]; then
+  write_samples > "$output_tsv"
+  echo "Wrote $output_tsv" >&2
+else
+  write_samples
+fi

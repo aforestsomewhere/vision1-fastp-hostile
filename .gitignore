@@ -1,0 +1,10 @@
+#Outputs
+cleaned_reads/
+tests/
+config/
+logs/
+
+#local files
+*.env
+*.tsv
+*.sif

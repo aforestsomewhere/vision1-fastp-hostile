@@ -1,0 +1,53 @@
+Bootstrap: docker
+From: condaforge/mambaforge:latest
+
+%labels
+    Tool "fastp + hostile"
+    Description "Minimal read QC and host-removal container"
+    Maintainer "Katie O'Mahony"
+
+%post
+    set -eux
+
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        bash \
+        coreutils \
+        sed \
+        grep \
+        gawk \
+        findutils \
+        ca-certificates \
+        procps \
+        gzip \
+        bzip2 \
+        pigz
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+    mamba install -y -n base \
+        -c conda-forge \
+        -c bioconda \
+        fastp \
+        hostile \
+        bowtie2 \
+        samtools
+
+    mamba clean -a -y
+
+    mkdir -p /opt/wrappers
+
+%files
+    wrappers/clean-one-sample /usr/local/bin/clean-one-sample
+    wrappers/sample-name-from-r1 /usr/local/bin/sample-name-from-r1
+
+%post
+    chmod +x /usr/local/bin/clean-one-sample
+    chmod +x /usr/local/bin/sample-name-from-r1
+
+%environment
+    export PATH="/usr/local/bin:$PATH"
+    export LC_ALL=C
+
+%runscript
+    exec "$@"
