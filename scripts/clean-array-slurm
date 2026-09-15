@@ -101,6 +101,7 @@ echo
 # -------------------------------------------------------------------------
 
 apptainer exec "$IMAGE" \
+    --bind /data:/data \
     bash "$CLEAN_SCRIPT" \
     --r1 "$r1" \
     --r2 "$r2" \
