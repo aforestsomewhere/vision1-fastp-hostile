@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=clean
+#SBATCH --cpus-per-task=10
+#SBATCH --output=logs/clean_%A_%a.out
+#SBATCH --error=logs/clean_%A_%a.err
+
+set -euo pipefail
+
+samples_tsv="$1"
+outdir="$2"
+
+# -------------------------------------------------------------------------
+# Get this array task's row.
+#
+# samples.tsv:
+#   line 1 = header
+#   line 2 = array task 1
+#   line 3 = array task 2
+#   ...
+# -------------------------------------------------------------------------
+
+line_num=$((SLURM_ARRAY_TASK_ID + 1))
+
+IFS=$'\t' read -r sample r1 r2 < <(
+    sed -n "${line_num}p" "$samples_tsv"
+)
+
+if [[ -z "${sample:-}" || -z "${r1:-}" || -z "${r2:-}" ]]; then
+    echo "ERROR: Could not read sample for array task $SLURM_ARRAY_TASK_ID" >&2
+    exit 1
+fi
+
+echo "Array task: $SLURM_ARRAY_TASK_ID"
+echo "Sample:     $sample"
+echo "R1:         $r1"
+echo "R2:         $r2"
+echo "Node:       $(hostname)"
+echo "Start:      $(date)"
+
+# -------------------------------------------------------------------------
+# Run existing single-sample pipeline
+# -------------------------------------------------------------------------
+
+clean-one-sample \
+    --r1 "$r1" \
+    --r2 "$r2" \
+    --sample "$sample" \
+    --outdir "$outdir/$sample" \
+    --threads "$SLURM_CPUS_PER_TASK" \
+    --hostile-index /data/databases_food/bowtie_indices/a_thaliana \
+    --hostile-index-label arabidopsis \
+    --hostile-index /data/databases_food/bowtie_indices/m_domestica \
+    --hostile-index-label apple
+
+echo "Finished: $sample"
+echo "End:      $(date)"

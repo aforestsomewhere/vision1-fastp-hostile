@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+Usage:
+  clean-multiple-samples \
+    --samples samples.tsv \
+    --outdir OUTDIR \
+    --threads N \
+    --hostile-index INDEX_PREFIX \
+    [--hostile-index INDEX_PREFIX ...] \
+    [--hostile-index-label LABEL ...]
+
+Example:
+  clean-multiple-samples \
+    --samples samples.tsv \
+    --outdir results \
+    --threads 10 \
+    --hostile-index /data/databases_food/bowtie_indices/a_thaliana \
+    --hostile-index-label arabidopsis \
+    --hostile-index /data/databases_food/bowtie_indices/m_domestica \
+    --hostile-index-label apple
+
+Notes:
+  --threads is the number of threads passed to clean-one-sample.
+
+  Samples are processed sequentially. This is intentional: if you request
+  10 threads, only one sample at a time uses those 10 threads.
+
+  Output is organized as:
+    OUTDIR/
+      sampleA/
+      sampleB/
+      ...
+USAGE
+}
+
+samples_tsv=""
+outdir=""
+threads=""
+
+hostile_indices=()
+hostile_labels=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --samples)
+      samples_tsv="$2"; shift 2 ;;
+    --outdir)
+      outdir="$2"; shift 2 ;;
+    --threads)
+      threads="$2"; shift 2 ;;
+    --hostile-index)
+      hostile_indices+=("$2"); shift 2 ;;
+    --hostile-index-label)
+      hostile_labels+=("$2"); shift 2 ;;
+    --help|-h)
+      usage
+      exit 0 ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      usage
+      exit 2 ;;
+  esac
+done
+
+# -------------------------------------------------------------------------
+# Validate arguments
+# -------------------------------------------------------------------------
+
+[[ -n "$samples_tsv" ]] || {
+  echo "ERROR: --samples required" >&2
+  exit 2
+}
+
+[[ -n "$outdir" ]] || {
+  echo "ERROR: --outdir required" >&2
+  exit 2
+}
+
+[[ -n "$threads" ]] || {
+  echo "ERROR: --threads required" >&2
+  exit 2
+}
+
+[[ -f "$samples_tsv" ]] || {
+  echo "ERROR: samples TSV does not exist: $samples_tsv" >&2
+  exit 2
+}
+
+if [[ "${#hostile_indices[@]}" -eq 0 ]]; then
+  echo "ERROR: at least one --hostile-index is required" >&2
+  exit 2
+fi
+
+if [[ "${#hostile_labels[@]}" -gt 0 &&
+      "${#hostile_labels[@]}" -ne "${#hostile_indices[@]}" ]]; then
+  echo "ERROR: number of --hostile-index-label values must match number of --hostile-index values" >&2
+  exit 2
+fi
+
+# Check clean-one-sample is available
+if ! command -v clean-one-sample >/dev/null 2>&1; then
+  echo "ERROR: clean-one-sample not found in PATH" >&2
+  exit 2
+fi
+
+mkdir -p "$outdir"
+
+# -------------------------------------------------------------------------
+# Construct arguments that are common to every sample
+# -------------------------------------------------------------------------
+
+hostile_args=()
+
+for index in "${hostile_indices[@]}"; do
+  hostile_args+=(--hostile-index "$index")
+done
+
+for label in "${hostile_labels[@]}"; do
+  hostile_args+=(--hostile-index-label "$label")
+done
+
+# -------------------------------------------------------------------------
+# Count samples for progress reporting
+# -------------------------------------------------------------------------
+
+n_samples=$(tail -n +2 "$samples_tsv" | awk 'NF' | wc -l)
+
+if [[ "$n_samples" -eq 0 ]]; then
+  echo "ERROR: no samples found in $samples_tsv" >&2
+  exit 1
+fi
+
+echo "Samples: $n_samples"
+echo "Output:  $outdir"
+echo "Threads: $threads"
+echo "Hostile indices: ${#hostile_indices[@]}"
+echo
+
+# -------------------------------------------------------------------------
+# Process samples
+# -------------------------------------------------------------------------
+
+sample_num=0
+
+while IFS=$'\t' read -r sample r1 r2; do
+
+  # Skip header
+  if [[ "$sample" == "sample" ]]; then
+    continue
+  fi
+
+  # Skip blank lines
+  [[ -n "$sample" ]] || continue
+
+  sample_num=$((sample_num + 1))
+
+  echo "================================================================"
+  echo "[$sample_num/$n_samples] Starting: $sample"
+  echo "R1: $r1"
+  echo "R2: $r2"
+  echo "Start: $(date)"
+  echo "================================================================"
+
+  # Validate FASTQs before starting the sample
+  if [[ ! -f "$r1" ]]; then
+    echo "ERROR: R1 does not exist for $sample: $r1" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$r2" ]]; then
+    echo "ERROR: R2 does not exist for $sample: $r2" >&2
+    exit 1
+  fi
+
+  sample_outdir="$outdir/$sample"
+
+  clean-one-sample \
+    --r1 "$r1" \
+    --r2 "$r2" \
+    --sample "$sample" \
+    --outdir "$sample_outdir" \
+    --threads "$threads" \
+    "${hostile_args[@]}"
+
+  echo
+  echo "[$sample_num/$n_samples] Finished: $sample"
+  echo "End: $(date)"
+  echo
+
+done < "$samples_tsv"
+
+echo "================================================================"
+echo "All $n_samples samples completed."
+echo "Finished: $(date)"
+echo "================================================================"
