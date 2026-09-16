@@ -19,12 +19,28 @@ Example:
     --r1 sample_R1.fastq.gz \
     --r2 sample_R2.fastq.gz \
     --sample sample \
-    --output results \
+    --outdir results \
     --threads 10 \
     --hostile-index /data/databases_food/bowtie_indices/a_thaliana \
-    --hostile-index /data/databases_food/bowtie_indices/m_domestica
+    --hostile-index-label arabidopsis \
+    --hostile-index /data/databases_food/bowtie_indices/m_domestica \
+    --hostile-index-label apple
+
+Processing:
+  1. Runs fastp on the input paired-end FASTQs.
+  2. Runs Hostile sequentially against each supplied index.
+  3. The cleaned output from each Hostile step becomes the input to
+     the next Hostile step.
+  4. Creates final symlinks:
+
+       SAMPLE.clean.nonhost.R1.fastq.gz
+       SAMPLE.clean.nonhost.R2.fastq.gz
 USAGE
 }
+
+# -------------------------------------------------------------------------
+# Defaults
+# -------------------------------------------------------------------------
 
 r1=""
 r2=""
@@ -35,53 +51,140 @@ threads=""
 hostile_indices=()
 hostile_labels=()
 
+# -------------------------------------------------------------------------
+# Parse arguments
+# -------------------------------------------------------------------------
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --r1)
-      r1="$2"; shift 2 ;;
+      r1="$2"
+      shift 2
+      ;;
     --r2)
-      r2="$2"; shift 2 ;;
+      r2="$2"
+      shift 2
+      ;;
     --sample)
-      sample="$2"; shift 2 ;;
+      sample="$2"
+      shift 2
+      ;;
     --outdir)
-      outdir="$2"; shift 2 ;;
+      outdir="$2"
+      shift 2
+      ;;
     --threads)
-      threads="$2"; shift 2 ;;
+      threads="$2"
+      shift 2
+      ;;
     --hostile-index)
-      hostile_indices+=("$2"); shift 2 ;;
+      hostile_indices+=("$2")
+      shift 2
+      ;;
     --hostile-index-label)
-      hostile_labels+=("$2"); shift 2 ;;
+      hostile_labels+=("$2")
+      shift 2
+      ;;
     --help|-h)
-      usage; exit 0 ;;
+      usage
+      exit 0
+      ;;
     *)
       echo "ERROR: unknown argument: $1" >&2
       usage
-      exit 2 ;;
+      exit 2
+      ;;
   esac
 done
 
-[[ -n "$r1" ]] || { echo "ERROR: --r1 required" >&2; exit 2; }
-[[ -n "$r2" ]] || { echo "ERROR: --r2 required" >&2; exit 2; }
-[[ -n "$sample" ]] || { echo "ERROR: --sample required" >&2; exit 2; }
-[[ -n "$outdir" ]] || { echo "ERROR: --outdir required" >&2; exit 2; }
-[[ -n "$threads" ]] || { echo "ERROR: --threads required" >&2; exit 2; }
+# -------------------------------------------------------------------------
+# Validate arguments
+# -------------------------------------------------------------------------
+
+[[ -n "$r1" ]] || {
+  echo "ERROR: --r1 required" >&2
+  exit 2
+}
+
+[[ -n "$r2" ]] || {
+  echo "ERROR: --r2 required" >&2
+  exit 2
+}
+
+[[ -n "$sample" ]] || {
+  echo "ERROR: --sample required" >&2
+  exit 2
+}
+
+[[ -n "$outdir" ]] || {
+  echo "ERROR: --outdir required" >&2
+  exit 2
+}
+
+[[ -n "$threads" ]] || {
+  echo "ERROR: --threads required" >&2
+  exit 2
+}
+
+[[ -f "$r1" ]] || {
+  echo "ERROR: R1 does not exist: $r1" >&2
+  exit 2
+}
+
+[[ -f "$r2" ]] || {
+  echo "ERROR: R2 does not exist: $r2" >&2
+  exit 2
+}
 
 if [[ "${#hostile_indices[@]}" -eq 0 ]]; then
   echo "ERROR: at least one --hostile-index is required" >&2
   exit 2
 fi
 
-if [[ "${#hostile_labels[@]}" -gt 0 && "${#hostile_labels[@]}" -ne "${#hostile_indices[@]}" ]]; then
+if [[ "${#hostile_labels[@]}" -gt 0 &&
+      "${#hostile_labels[@]}" -ne "${#hostile_indices[@]}" ]]; then
   echo "ERROR: number of --hostile-index-label values must match number of --hostile-index values" >&2
   exit 2
 fi
 
+# -------------------------------------------------------------------------
+# Check required software
+# -------------------------------------------------------------------------
+
+command -v fastp >/dev/null 2>&1 || {
+  echo "ERROR: fastp not found in PATH" >&2
+  exit 1
+}
+
+command -v hostile >/dev/null 2>&1 || {
+  echo "ERROR: hostile not found in PATH" >&2
+  exit 1
+}
+
+# -------------------------------------------------------------------------
+# Set up output directories
+# -------------------------------------------------------------------------
+
 mkdir -p "$outdir"/{fastp,hostile,logs}
+
+# Normalize output directory to an absolute path.
+# This ensures that the symlinks created later have absolute targets.
+
+outdir="$(cd "$outdir" && pwd -P)"
 
 fastp_r1="$outdir/fastp/${sample}.fastp.R1.fastq.gz"
 fastp_r2="$outdir/fastp/${sample}.fastp.R2.fastq.gz"
 
-echo "[$sample] fastp start: $(date)"
+# -------------------------------------------------------------------------
+# fastp
+# -------------------------------------------------------------------------
+
+echo "============================================================"
+echo "[$sample] fastp"
+echo "[$sample] start: $(date)"
+echo "[$sample] R1: $r1"
+echo "[$sample] R2: $r2"
+echo "============================================================"
 
 fastp \
   --in1 "$r1" \
@@ -94,10 +197,29 @@ fastp \
   --json "$outdir/fastp/${sample}.fastp.json" \
   2> "$outdir/logs/${sample}.fastp.stderr.log"
 
+[[ -f "$fastp_r1" ]] || {
+  echo "ERROR: fastp did not produce R1: $fastp_r1" >&2
+  exit 1
+}
+
+[[ -f "$fastp_r2" ]] || {
+  echo "ERROR: fastp did not produce R2: $fastp_r2" >&2
+  exit 1
+}
+
+echo "[$sample] fastp complete: $(date)"
+
+# These variables always contain the input FASTQs for the NEXT Hostile step.
+
 current_r1="$fastp_r1"
 current_r2="$fastp_r2"
 
+# -------------------------------------------------------------------------
+# Sequential Hostile cleaning
+# -------------------------------------------------------------------------
+
 for i in "${!hostile_indices[@]}"; do
+
   index="${hostile_indices[$i]}"
 
   if [[ "${#hostile_labels[@]}" -gt 0 ]]; then
@@ -111,10 +233,14 @@ for i in "${!hostile_indices[@]}"; do
 
   mkdir -p "$step_dir"
 
-  echo "[$sample] hostile step ${step_num}: ${label}"
-  echo "[$sample] index: ${index}"
+  echo
+  echo "============================================================"
+  echo "[$sample] Hostile step ${step_num}: ${label}"
+  echo "[$sample] index:    ${index}"
   echo "[$sample] input R1: ${current_r1}"
   echo "[$sample] input R2: ${current_r2}"
+  echo "[$sample] start:    $(date)"
+  echo "============================================================"
 
   hostile clean \
     --fastq1 "$current_r1" \
@@ -124,27 +250,100 @@ for i in "${!hostile_indices[@]}"; do
     --index "$index" \
     2> "$outdir/logs/${sample}.hostile.step${step_num}.${label}.stderr.log"
 
-  next_r1=$(find "$step_dir" -type f \( -name "*_1.clean*.fq.gz" -o -name "*_1.clean*.fastq.gz" -o -name "*clean*R1*.fq.gz" -o -name "*clean*R1*.fastq.gz" -o -name "*_R1*.clean*.fq.gz" -o -name "*_R1*.clean*.fastq.gz" \) | head -n 1)
-  next_r2=$(find "$step_dir" -type f \( -name "*_2.clean*.fq.gz" -o -name "*_2.clean*.fastq.gz" -o -name "*clean*R2*.fq.gz" -o -name "*clean*R2*.fastq.gz" -o -name "*_R2*.clean*.fq.gz" -o -name "*_R2*.clean*.fastq.gz" \) | head -n 1)
+  # -----------------------------------------------------------------------
+  # Locate Hostile outputs.
+  #
+  # Hostile names paired cleaned files approximately:
+  #
+  #   input.R1.clean_1.fastq.gz
+  #   input.R2.clean_2.fastq.gz
+  #
+  # After another Hostile pass these may become:
+  #
+  #   input.R1.clean_1.clean_1.fastq.gz
+  #   input.R2.clean_2.clean_2.fastq.gz
+  #
+  # Therefore "*R1*.clean_1.fastq.gz" and
+  # "*R2*.clean_2.fastq.gz" deliberately tolerate previous
+  # Hostile suffixes.
+  # -----------------------------------------------------------------------
+
+  next_r1="$(
+    find "$step_dir" -type f \
+      \( \
+        -name "*R1*.clean_1.fastq.gz" \
+        -o -name "*R1*.clean_1.fq.gz" \
+      \) \
+      -print -quit
+  )"
+
+  next_r2="$(
+    find "$step_dir" -type f \
+      \( \
+        -name "*R2*.clean_2.fastq.gz" \
+        -o -name "*R2*.clean_2.fq.gz" \
+      \) \
+      -print -quit
+  )"
+
+  # -----------------------------------------------------------------------
+  # Validate Hostile outputs
+  # -----------------------------------------------------------------------
 
   if [[ -z "$next_r1" || -z "$next_r2" ]]; then
-    echo "ERROR: Could not identify Hostile clean output files after step ${step_num}" >&2
-    echo "Files in $step_dir:" >&2
+    echo >&2
+    echo "ERROR: Could not identify Hostile clean outputs after step ${step_num}" >&2
+    echo "Sample: $sample" >&2
+    echo "Index:  $index" >&2
+    echo "Files produced in $step_dir:" >&2
+
     find "$step_dir" -type f | sort >&2
+
     exit 1
   fi
+
+  # Convert to absolute paths.
+  # This prevents later symlinks from having ambiguous relative targets.
+
+  next_r1="$(realpath "$next_r1")"
+  next_r2="$(realpath "$next_r2")"
+
+  echo "[$sample] output R1: $next_r1"
+  echo "[$sample] output R2: $next_r2"
+
+  # -----------------------------------------------------------------------
+  # Make this step's output the input to the next Hostile step
+  # -----------------------------------------------------------------------
 
   current_r1="$next_r1"
   current_r2="$next_r2"
 
-  ln -sf "$current_r1" "$outdir/hostile/${sample}.after_step${step_num}.${label}.R1.fastq.gz"
-  ln -sf "$current_r2" "$outdir/hostile/${sample}.after_step${step_num}.${label}.R2.fastq.gz"
+  # Convenient links to each intermediate cleaning stage.
 
-  echo "[$sample] hostile step ${step_num} done: $(date)"
+  ln -sfn "$current_r1" \
+    "$outdir/hostile/${sample}.after_step${step_num}.${label}.R1.fastq.gz"
+
+  ln -sfn "$current_r2" \
+    "$outdir/hostile/${sample}.after_step${step_num}.${label}.R2.fastq.gz"
+
+  echo "[$sample] Hostile step ${step_num} complete: $(date)"
+
 done
 
-ln -sf "$current_r1" "$outdir/${sample}.clean.nonhost.R1.fastq.gz"
-ln -sf "$current_r2" "$outdir/${sample}.clean.nonhost.R2.fastq.gz"
+# -------------------------------------------------------------------------
+# Final outputs
+# -------------------------------------------------------------------------
 
-echo "[$sample] final R1: $outdir/${sample}.clean.nonhost.R1.fastq.gz"
-echo "[$sample] final R2: $outdir/${sample}.clean.nonhost.R2.fastq.gz"
+final_r1="$outdir/${sample}.clean.nonhost.R1.fastq.gz"
+final_r2="$outdir/${sample}.clean.nonhost.R2.fastq.gz"
+
+ln -sfn "$current_r1" "$final_r1"
+ln -sfn "$current_r2" "$final_r2"
+
+echo
+echo "============================================================"
+echo "[$sample] CLEANING COMPLETE"
+echo "[$sample] final R1: $final_r1"
+echo "[$sample] final R2: $final_r2"
+echo "[$sample] finished: $(date)"
+echo "============================================================"
